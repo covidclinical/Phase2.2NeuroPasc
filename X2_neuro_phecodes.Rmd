@@ -96,10 +96,16 @@ nrow(covid_pos %>% distinct(patient_num))
 nrow(covid_pos %>% filter(status == 'Admitted') %>% distinct(patient_num))
 nrow(covid_pos %>% filter(status == 'Not Admitted') %>% distinct(patient_num))
 
-# 6/14/2022: 6% pts are admitted
+# 6/14/2022: ~6% pts are admitted
 table(groups$status, groups$split)
 
-# the math looks good to me here
+### the math looks good to me here
+## admission status stratification
+((1497+6047)/114762)*100 # ~6.5%
+((21436+85782)/114762)*100 # ~93.5%
+## train and test set stratification
+((6047+85782)/114762)*100 # ~80%
+((1497+21436)/114762)*100 # ~20%
 ```
 
 **Create the train and test data frames**
@@ -108,18 +114,21 @@ table(groups$status, groups$split)
 train <- covid_pos %>% 
   inner_join(., groups %>% 
                filter(split == "train") %>% 
-               distinct(patient_num))
+               distinct(patient_num)) %>% 
+  ungroup()
+
 nrow(unique(data.frame(train$patient_num)))
 
 test <- covid_pos %>% 
   inner_join(., groups %>% 
                filter(split == "test") %>% 
-               distinct(patient_num))
+               distinct(patient_num)) %>% 
+  ungroup()
 
 nrow(unique(data.frame(test$patient_num)))
 ```
 
-# Identify Neuro Patients in the Training Set
+# Identify Patients with Potential Neuro-PASC PheCodes in the Training Set
 
 ## Evaluate Harrison Zhang's codes
 
@@ -154,7 +163,7 @@ neuro_phecodes_icd <- neuro_phecodes %>%
             by = "phecode")
 ```
 
-### Evaluate COVID+ patients with NeuroPASC codes within 90 days post-admission
+### Identify COVID+ patients with potential NeuroPASC codes within 90 days post-admission
 
 This will select any patient who has a code at least 90 days after their initial hospitalization
 
@@ -176,7 +185,8 @@ pasc_90_hz <- pasc_90_train_hz %>%
   mutate(count = n_distinct(patient_num),
          percent = round(count/nrow(train %>% distinct(patient_num))*100,2)) %>% 
   ungroup() %>% 
-  distinct(phecode, Phenotype, count, group, status, percent)
+  distinct(phecode, Phenotype, count, group, status, percent) %>% 
+  arrange(desc(percent))
 
 plot_pasc90_hz <- ggplot(pasc_90_hz,
        aes(y = Phenotype, x = percent, color = status, label = count)) + 
@@ -203,15 +213,21 @@ covid_phecodes_roll_train_hz <-  train %>%
   mutate(PheCode_roll = as.numeric(substr(phecode, 1, 3))) %>% 
   group_by(patient_num, PheCode_roll) %>% 
   slice_min(order_by = days_since_admission) %>% 
-  filter(days_since_admission >= 90)
+  filter(days_since_admission >= 90) %>% 
+  ungroup() 
+```
 
+#### Frequency of new-onset PheCodes
+
+```{r}
 # calculate counts and percents by non-rolled Phenotype/status
 first_onset_hz <- covid_phecodes_roll_train_hz %>% 
   group_by(Phenotype, status) %>% 
   mutate(count = n_distinct(patient_num),
          percent = round(count/nrow(train %>% distinct(patient_num))*100,2)) %>% 
   ungroup() %>% 
-  distinct(phecode, Phenotype, PheCode_roll, count, group, status, percent) 
+  distinct(phecode, Phenotype, PheCode_roll, count, group, status, percent) %>% 
+  arrange(desc(percent))
 
 plot_first_onset_hz <- ggplot(first_onset_hz,
        aes(y = Phenotype, x = percent, label = count, color = status)) + 
@@ -223,14 +239,12 @@ plot_first_onset_hz <- ggplot(first_onset_hz,
 ggplotly(plot_first_onset_hz) %>% layout(
       margin = list(b = 50)) # to fully display the x and y axis labels
 
-datatable(first_onset_hz %>% arrange(desc(percent)), filter = "top")
+datatable(first_onset_hz, filter = "top")
 ```
 
 ## Evaluate All Neuro/Mental health PheCodes
 
-We will also include our rescued codes from before
-
-### Frequency of ALL neuro/mental health PheCodes
+We will also include all the codes in the 'HZ' analysis
 
 ```{r}
 all_neuro_phecodes <- phecodes_all %>% 
@@ -244,10 +258,11 @@ all_neuro_phecodes <- phecodes_all %>%
 all_neuro_phecodes_90_train <- train %>% 
   merge(., all_neuro_phecodes,
               by = "concept_code") %>% 
-  filter(days_since_admission >= 90)
+  filter(days_since_admission >= 90) %>% 
+  ungroup()
 ```
 
-#### Prevalent PheCodes after 90 days
+#### Frequency of PheCodes after 90 days
 
 ```{r fig.height=45, fig.width=10}
 all_neuro_phecodes_90 <- all_neuro_phecodes_90_train %>% 
@@ -255,7 +270,8 @@ all_neuro_phecodes_90 <- all_neuro_phecodes_90_train %>%
   mutate(count = n_distinct(patient_num),
          percent = round(count/nrow(train %>% distinct(patient_num))*100,2)) %>% 
   ungroup() %>% 
-  distinct(phecode, Phenotype, count, group, status, percent)
+  distinct(phecode, Phenotype, count, group, status, percent) %>% 
+  arrange(desc(percent))
 
 plot_all_neuro_phecodes_90 <- ggplot(all_neuro_phecodes_90,
        aes(y = Phenotype, x = percent, color = status, label = count)) + 
@@ -278,14 +294,21 @@ all_neuro_covid_phecodes_train_roll <-  train %>%
   mutate(PheCode_roll = as.numeric(substr(phecode, 1, 3))) %>% 
   group_by(patient_num, PheCode_roll) %>% 
   slice_min(order_by = days_since_admission) %>% 
-  filter(days_since_admission >= 90) 
+  filter(days_since_admission >= 90) %>% 
+  ungroup()
 
+```
+
+### Frequency of new-onset PheCodes
+
+```{r}
 first_onset_all_neuro <- all_neuro_covid_phecodes_train_roll %>% 
   group_by(Phenotype, status) %>% 
   mutate(count = n_distinct(patient_num),
          percent = round(count/nrow(train %>% distinct(patient_num))*100,2)) %>% 
   ungroup() %>% 
-  distinct(phecode, PheCode_roll, Phenotype, count, group, status, percent) 
+  distinct(phecode, PheCode_roll, Phenotype, count, group, status, percent) %>% 
+  arrange(desc(percent))
 
 plot_first_onset_all_neuro <- ggplot(first_onset_all_neuro,
        aes(y = Phenotype, x = percent, label = count, color = status)) + 
@@ -324,22 +347,38 @@ all_neuro_phecode_rolled_list <- all_neuro_phecodes %>%
   distinct(Phenotype, phecode, PheCode_roll, Phenotype_roll)
 ```
 
-## Create patient vectors
+**Evaluate how many unique PheCodes we have in each dataset**
 
 ```{r}
-# for every patient we will create a vector with all codes of interest
-# one-hot encode
-
-## how many unique codes in each dataset
 # HZ analysis
-nrow(pasc_90_hz %>% distinct(phecode))
-nrow(first_onset_hz %>% distinct(phecode))
-nrow(first_onset_hz %>% distinct(PheCode_roll))
-# all neuro/mental health codes + rescued codes
-nrow(all_neuro_phecodes_90 %>% distinct(phecode))
-nrow(first_onset_all_neuro %>% distinct(phecode))
-nrow(first_onset_all_neuro %>% distinct(PheCode_roll))
+nrow(pasc_90_train_hz %>% distinct(phecode))
+nrow(covid_phecodes_roll_train_hz %>% distinct(phecode))
+nrow(covid_phecodes_roll_train_hz %>% distinct(PheCode_roll))
 
+# all neuro/mental health codes + rescued codes
+nrow(all_neuro_phecodes_90_train %>% distinct(phecode))
+nrow(all_neuro_covid_phecodes_train_roll %>% distinct(phecode))
+nrow(all_neuro_covid_phecodes_train_roll %>% distinct(PheCode_roll))
+
+```
+
+**Evaluate how many unique patients we have in each dataset**
+
+```{r}
+# HZ analysis
+nrow(pasc_90_train_hz %>% distinct(patient_num))
+nrow(covid_phecodes_roll_train_hz %>% distinct(patient_num))
+
+# all neuro/mental health codes + rescued codes
+nrow(all_neuro_phecodes_90_train %>% distinct(patient_num))
+nrow(all_neuro_covid_phecodes_train_roll %>% distinct(patient_num))
+```
+
+## Create patient vectors
+
+For every patient we will create a one-hot encoded vector with all codes of interest
+
+```{r}
 # function to create vectors of interest
 # `phecode_column` is the variable (Phenotype, phecode, or Phenotype_roll/PheCode_roll) that will be one-hot encoded/used as the column names
 
@@ -381,31 +420,37 @@ vector_all_neuro3_first_onset_roll <- all_neuro_covid_phecodes_train_roll %>%
 # if all 0s, the most could be 34
 test = vector_hz1
 test$sum <- rowSums(test == 0) 
+dim(test)[2]-3
 max(test$sum)
 
-# most could be 35
+# most could be 34
 test2 = vector_hz2_first_onset
 test2$sum <- rowSums(test2 == 0)
+dim(test2)[2]-3
 max(test2$sum)
 
 # most could be 21
 test3 = vector_hz3_first_onset_roll
 test3$sum <- rowSums(test3 == 0)
+dim(test3)[2]-3
 max(test3$sum)
 
 # most could be 160
 test4 = vector_all_neuro1
 test4$sum <- rowSums(test4 == 0)
+dim(test4)[2]-3
 max(test4$sum)
 
 # most could be 159
 test5 = vector_all_neuro2_first_onset
 test5$sum <- rowSums(test5 == 0)
+dim(test5)[2]-3
 max(test5$sum)
 
 # most could be 59
 test6 = vector_all_neuro3_first_onset_roll
 test6$sum <- rowSums(test6 == 0)
+dim(test6)[2]-3
 max(test6$sum)
 
 rm(test, test2, test3, test4, test5, test6)
@@ -416,24 +461,24 @@ rm(test, test2, test3, test4, test5, test6)
 These will be used for clustering
 
 ```{r}
-pasc_vectors <- list(vector_hz1 = vector_hz1, 
+phecode_vectors <- list(vector_hz1 = vector_hz1, 
                     vector_hz2_first_onset = vector_hz2_first_onset, 
                     vector_hz3_first_onset_roll = vector_hz3_first_onset_roll, 
                     vector_all_neuro1 = vector_all_neuro1,
                     vector_all_neuro2_first_onset = vector_all_neuro2_first_onset, 
                     vector_all_neuro3_first_onset_roll = vector_all_neuro3_first_onset_roll)
 
-save(pasc_vectors, file = "results/pasc_vectors.rda")
+save(phecode_vectors, file = "results/phecode_vectors.rda")
 ```
 
 ### Save the tables with the frequency of each PheCode
 
 ```{r}
-phecode_counts.rda <- list(pasc_90_hz = pasc_90_hz,
-                         covid_phecodes_roll_train_hz = covid_phecodes_roll_train_hz, 
-                         all_neuro_phecodes_90_train = all_neuro_phecodes_90_train,
-                         all_neuro_covid_phecodes_train_roll = all_neuro_covid_phecodes_train_roll)
+phecode_counts <- list(pasc_90_hz = pasc_90_hz,
+                         first_onset_hz = first_onset_hz, 
+                         all_neuro_phecodes_90 = all_neuro_phecodes_90,
+                         first_onset_all_neuro = first_onset_all_neuro)
 
 
-save(phecode_counts.rda, file = "results/phecode_counts.rda")
+save(phecode_counts, file = "results/phecode_counts.rda")
 ```
